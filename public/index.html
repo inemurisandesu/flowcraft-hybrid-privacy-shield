@@ -81,6 +81,12 @@ Issue: Duplicate invoice #INV-2026-1122 for $450. Requesting refund within 5 bus
           </div>
         </div>
 
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+          <button class="ghost" data-preset="pii_local">Preset 1: PII → Local Nano</button>
+          <button class="ghost" data-preset="hybrid_json">Preset 2: Redacted → Cloud JSON</button>
+          <button class="ghost" data-preset="offline_shield">Preset 3: Strict Offline</button>
+        </div>
+
         <div style="display:flex; gap:8px; flex-wrap:wrap;">
           <button id="btn-run">Run Hybrid AI Router</button>
           <button id="btn-offline-sim" class="ghost">Toggle Offline Simulation</button>

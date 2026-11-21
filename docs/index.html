@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FlowCraft Privacy Shield — Hybrid AI Router</title>
+  <style>
+    :root { --bg: #0b1120; --panel: #111827; --border: #1f2937; --accent: #38bdf8; --ok: #4ade80; --warn: #fbbf24; --text: #f1f5f9; --muted: #94a3b8; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); padding: 24px; }
+    .container { max-width: 1020px; margin: 0 auto; }
+    header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
+    h1 { margin: 0; font-size: 22px; color: var(--accent); }
+    .sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+    .pills { display: flex; gap: 8px; flex-wrap: wrap; }
+    .pill { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel); }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 780px) { .grid { grid-template-columns: 1fr; } }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+    label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    textarea, select, input { width: 100%; background: #0f172a; color: var(--text); border: 1px solid #334155; border-radius: 6px; padding: 10px; font-family: ui-monospace, monospace; font-size: 13px; }
+    textarea { min-height: 180px; resize: vertical; }
+    .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0; }
+    button { background: #2563eb; color: #fff; border: none; border-radius: 6px; padding: 10px 14px; font-weight: 600; cursor: pointer; font-size: 13px; }
+    button:hover { background: #1d4ed8; }
+    button.ghost { background: #1e293b; border: 1px solid #334155; }
+    .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
+    .metric { background: #0f172a; border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+    .metric .k { font-size: 11px; color: var(--muted); }
+    .metric .v { font-size: 18px; font-weight: 700; margin-top: 4px; color: var(--ok); }
+    pre { white-space: pre-wrap; word-break: break-word; background: #0f172a; border: 1px solid var(--border); border-radius: 6px; padding: 12px; font-size: 12px; min-height: 140px; }
+    .route-banner { padding: 10px 12px; border-radius: 6px; font-size: 13px; margin-bottom: 10px; border: 1px solid #1e3a8a; background: #172554; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <h1>FlowCraft Privacy Shield — Hybrid AI Router</h1>
+        <div class="sub">On-Device Chrome Gemini Nano × Firebase AI Logic Cloud Fallback with Deterministic PII Redaction</div>
+      </div>
+      <div class="pills">
+        <span class="pill" id="pill-nano">Chrome AI: Checking...</span>
+        <span class="pill" id="pill-net">Network: Checking...</span>
+      </div>
+    </header>
+
+    <div class="metrics">
+      <div class="metric"><div class="k">Active Route</div><div class="v" id="m-route">—</div></div>
+      <div class="metric"><div class="k">PII / Secrets Shielded</div><div class="v" id="m-pii">0</div></div>
+      <div class="metric"><div class="k">Cloud Bytes Sent</div><div class="v" id="m-bytes">0 B</div></div>
+      <div class="metric"><div class="k">Latency</div><div class="v" id="m-lat">—</div></div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <label for="doc-input">Document / Prompt Input (Try pasting sensitive emails, phone numbers, or API keys)</label>
+        <textarea id="doc-input"># Q4 Billing Escalation
+Customer: alice.tanaka@example.com (Tel: 090-1234-5678, IP: 192.168.10.42)
+Temporary webhook token: ghp_1234567890abcdefghij123456
+
+Issue: Duplicate invoice #INV-2026-1122 for $450. Requesting refund within 5 business days and confirmation of API access restoration.</textarea>
+
+        <div class="controls">
+          <div>
+            <label for="task-type">Task Complexity</label>
+            <select id="task-type">
+              <option value="summarize">Quick Summary (Prefer On-Device Nano)</option>
+              <option value="classify">Ticket Triage (Prefer On-Device Nano)</option>
+              <option value="structured-json">Strict JSON Extraction (Hybrid Cloud)</option>
+              <option value="deep-analysis">Deep Risk Analysis (Hybrid Cloud)</option>
+            </select>
+          </div>
+          <div>
+            <label for="privacy-mode">Routing Policy</label>
+            <select id="privacy-mode">
+              <option value="hybrid-auto">Hybrid Auto (On-Device First + Redacted Cloud)</option>
+              <option value="strict-local">Strict Local Only (0 Bytes Cloud Egress)</option>
+              <option value="cloud-redacted">Force Cloud (Always Strip PII Locally First)</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+          <button class="ghost" data-preset="pii_local">Preset 1: PII → Local Nano</button>
+          <button class="ghost" data-preset="hybrid_json">Preset 2: Redacted → Cloud JSON</button>
+          <button class="ghost" data-preset="offline_shield">Preset 3: Strict Offline</button>
+        </div>
+
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button id="btn-run">Run Hybrid AI Router</button>
+          <button id="btn-offline-sim" class="ghost">Toggle Offline Simulation</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <label>Routing Decision & Sanitized Payload Audit</label>
+        <div class="route-banner" id="route-reason">Click "Run Hybrid AI Router" to inspect deterministic privacy routing.</div>
+        <label>Model Output / Sanitized Egress Preview</label>
+        <pre id="output">Waiting for execution...</pre>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

@@ -1,7 +1,36 @@
 import { decideRoute, repairJsonResponse } from "./router.js";
+import { callFirebaseHybridCloud } from "./firebase-hybrid.js";
 
 let simulatedOffline = false;
 let onDeviceAvailable = false;
+
+const PRESETS = {
+  pii_local: {
+    taskType: "summarize",
+    privacyMode: "hybrid-auto",
+    text:
+      "# Q4 Billing Escalation\n" +
+      "Customer: alice.tanaka@example.com (Tel: 090-1234-5678, IP: 192.168.10.42)\n" +
+      "Temporary webhook token: ghp_1234567890abcdefghij123456\n\n" +
+      "Issue: Duplicate invoice #INV-2026-1122 for $450. Requesting refund within 5 business days.",
+  },
+  hybrid_json: {
+    taskType: "structured-json",
+    privacyMode: "hybrid-auto",
+    text:
+      "Vendor Incident Report — Prepared by ops-lead@corp-example.jp (03-5555-0199)\n" +
+      "Affected server: 10.24.8.15 | Key leaked: sk-proj1234567890abcdef123456\n" +
+      "Action required: Rotate credentials immediately, audit access logs from 2026-11-20, notify security team.",
+  },
+  offline_shield: {
+    taskType: "deep-analysis",
+    privacyMode: "strict-local",
+    text:
+      "CONFIDENTIAL BOARD MEMO\n" +
+      "Contact CFO at cfo@private-holdings.co.jp / 080-9999-8888.\n" +
+      "Proposed Q1 budget reallocation: $120,000 toward automated security auditing and on-device inference.",
+  },
+};
 
 async function detectChromeOnDeviceAi() {
   const pill = document.getElementById("pill-nano");
@@ -12,14 +41,14 @@ async function detectChromeOnDeviceAi() {
       pill.textContent = `Chrome Gemini Nano: ${avail}`;
       return;
     }
-    if (window.ai && window.ai.languageModel && typeof window.ai.languageModel.capabilities === "function") {
+    if (window.ai?.languageModel?.capabilities) {
       const cap = await window.ai.languageModel.capabilities();
       onDeviceAvailable = cap.available === "readily";
       pill.textContent = `Chrome Gemini Nano: ${cap.available}`;
       return;
     }
     onDeviceAvailable = false;
-    pill.textContent = "Chrome Gemini Nano: Fallback Mode";
+    pill.textContent = "Chrome Gemini Nano: Fallback Ready";
   } catch {
     onDeviceAvailable = false;
     pill.textContent = "Chrome Gemini Nano: Unavailable";
@@ -50,20 +79,20 @@ async function runOnDeviceNano(promptText) {
       session.destroy?.();
     }
   }
-  throw new Error("On-device model API not available in this browser");
+  throw new Error("On-device Gemini Nano API unavailable in this browser");
 }
 
 function deterministicLocalSummary(text, taskType, scan) {
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
-  const headline = lines[0] || "Document";
   return JSON.stringify(
     {
       engine: "LOCAL_DETERMINISTIC_SHIELD",
       taskType,
-      headline,
+      headline: lines[0] || "Document",
       lineCount: lines.length,
       piiShielded: scan.counts,
-      note: "Executed 100% locally with 0 bytes sent to cloud. Enable Chrome Built-in AI (Gemini Nano) for full on-device neural inference, or connect Firebase AI Logic config for sanitized cloud hybrid routing.",
+      cloudBytesSent: 0,
+      note: "100% local execution with zero cloud egress.",
     },
     null,
     2
@@ -77,13 +106,7 @@ async function executeHybridRouter() {
   const privacyMode = document.getElementById("privacy-mode").value;
   const isOnline = navigator.onLine && !simulatedOffline;
 
-  const decision = decideRoute({
-    text,
-    taskType,
-    privacyMode,
-    onDeviceAvailable,
-    isOnline,
-  });
+  const decision = decideRoute({ text, taskType, privacyMode, onDeviceAvailable, isOnline });
 
   document.getElementById("m-route").textContent = decision.target.replaceAll("_", " ");
   document.getElementById("m-pii").textContent = String(decision.scan.totalFindings);
@@ -93,33 +116,21 @@ async function executeHybridRouter() {
   let resultText = "";
   try {
     if (decision.target === "ON_DEVICE_NANO") {
-      const prompt = `Task: ${taskType}. Respond concisely.\n\n${decision.payloadToModel}`;
-      resultText = await runOnDeviceNano(prompt);
+      resultText = await runOnDeviceNano(`Task: ${taskType}. Be concise.\n\n${decision.payloadToModel}`);
     } else if (decision.target === "FIREBASE_CLOUD_GEMINI") {
-      // Cloud integration hook: when Firebase AI Logic is configured in firebase-config.js,
-      // call Firebase getAI() / getGenerativeModel() with ONLY decision.payloadToModel (PII already stripped).
-      const mockCloudStructured = JSON.stringify(
-        {
-          route: "FIREBASE_CLOUD_GEMINI (Sanitized Payload Ready)",
-          taskType,
-          piiStrippedBeforeEgress: decision.scan.counts,
-          sanitizedPayloadSentToCloud: decision.payloadToModel,
-        },
-        null,
-        2
-      );
-      resultText = taskType === "structured-json"
-        ? JSON.stringify(repairJsonResponse(mockCloudStructured), null, 2)
-        : mockCloudStructured;
+      const cloudRes = await callFirebaseHybridCloud(decision.payloadToModel, taskType);
+      resultText =
+        taskType === "structured-json"
+          ? JSON.stringify(repairJsonResponse(cloudRes.text), null, 2)
+          : cloudRes.text;
     } else {
       resultText = deterministicLocalSummary(decision.payloadToModel, taskType, decision.scan);
     }
   } catch (err) {
-    resultText = `Fallback triggered (${err.message}):\n\n` + deterministicLocalSummary(decision.payloadToModel, taskType, decision.scan);
+    resultText = `Safe Local Fallback (${err.message}):\n\n` + deterministicLocalSummary(decision.payloadToModel, taskType, decision.scan);
   }
 
-  const dt = Math.round(performance.now() - t0);
-  document.getElementById("m-lat").textContent = `${dt} ms`;
+  document.getElementById("m-lat").textContent = `${Math.round(performance.now() - t0)} ms`;
   document.getElementById("output").textContent = resultText;
 }
 
@@ -127,6 +138,16 @@ document.getElementById("btn-run").addEventListener("click", executeHybridRouter
 document.getElementById("btn-offline-sim").addEventListener("click", () => {
   simulatedOffline = !simulatedOffline;
   refreshNetworkPill();
+});
+document.querySelectorAll("[data-preset]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const p = PRESETS[btn.getAttribute("data-preset")];
+    if (!p) return;
+    document.getElementById("doc-input").value = p.text;
+    document.getElementById("task-type").value = p.taskType;
+    document.getElementById("privacy-mode").value = p.privacyMode;
+    executeHybridRouter();
+  });
 });
 window.addEventListener("online", refreshNetworkPill);
 window.addEventListener("offline", refreshNetworkPill);
