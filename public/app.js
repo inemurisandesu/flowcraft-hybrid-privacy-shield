@@ -3,6 +3,7 @@ import { callFirebaseHybridCloud } from "./firebase-hybrid.js";
 
 let simulatedOffline = false;
 let onDeviceAvailable = false;
+let pendingDecision = null;
 
 const PRESETS = {
   pii_local: {
@@ -59,7 +60,7 @@ function refreshNetworkPill() {
   const online = navigator.onLine && !simulatedOffline;
   document.getElementById("pill-net").textContent = online
     ? "Network: Online"
-    : "Network: Offline (Local Shield Active)";
+    : "Network: Offline (ONLY_ON_DEVICE Active)";
 }
 
 async function runOnDeviceNano(promptText) {
@@ -86,55 +87,90 @@ function deterministicLocalSummary(text, taskType, scan) {
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
   return JSON.stringify(
     {
-      engine: "LOCAL_DETERMINISTIC_SHIELD",
+      engine: "ONLY_ON_DEVICE_DETERMINISTIC_SHIELD",
       taskType,
-      headline: lines[0] || "Document",
+      headline: lines[0] || "Incident Log",
       lineCount: lines.length,
       piiShielded: scan.counts,
       cloudBytesSent: 0,
-      note: "100% local execution with zero cloud egress.",
+      sanitizedSummaryText: scan.redactedText,
     },
     null,
     2
   );
 }
 
-async function executeHybridRouter() {
+function runStep1LocalScan() {
   const t0 = performance.now();
   const text = document.getElementById("doc-input").value;
   const taskType = document.getElementById("task-type").value;
   const privacyMode = document.getElementById("privacy-mode").value;
   const isOnline = navigator.onLine && !simulatedOffline;
 
-  const decision = decideRoute({ text, taskType, privacyMode, onDeviceAvailable, isOnline });
+  pendingDecision = decideRoute({ text, taskType, privacyMode, onDeviceAvailable, isOnline });
+  pendingDecision.taskType = taskType;
 
-  document.getElementById("m-route").textContent = decision.target.replaceAll("_", " ");
-  document.getElementById("m-pii").textContent = String(decision.scan.totalFindings);
-  document.getElementById("m-bytes").textContent = `${decision.cloudBytesSent} B`;
-  document.getElementById("route-reason").textContent = decision.reason;
+  document.getElementById("m-route").textContent = `PREVIEW (${pendingDecision.target.replaceAll("_", " ")})`;
+  document.getElementById("m-pii").textContent = String(pendingDecision.scan.totalFindings);
+  document.getElementById("m-bytes").textContent = "0 B (Awaiting Consent)";
+  document.getElementById("m-lat").textContent = `${Math.round(performance.now() - t0)} ms (local)`;
+  document.getElementById("route-reason").textContent = pendingDecision.reason;
+
+  const isCloud = pendingDecision.target === "FIREBASE_CLOUD_GEMINI";
+  document.getElementById("preview-box").textContent = isCloud
+    ? `[EXACT PAYLOAD TO BE SENT TO CLOUD — ${pendingDecision.cloudBytesSent} bytes]\n\n${pendingDecision.payloadToModel}`
+    : `[0 BYTES WILL LEAVE THIS DEVICE — LOCAL EXECUTION ONLY]\n\n${pendingDecision.scan.redactedText}`;
+
+  const approveBtn = document.getElementById("btn-approve");
+  approveBtn.disabled = false;
+  approveBtn.textContent = isCloud
+    ? `Step 2: Approve & Send Sanitized Payload (${pendingDecision.cloudBytesSent} B)`
+    : "Step 2: Generate Report 100% On-Device (0 B Sent)";
+  document.getElementById("output").textContent = "Review the preview above, then click Step 2.";
+}
+
+async function runStep2ApprovedExecution() {
+  if (!pendingDecision) return;
+  const t0 = performance.now();
+  const d = pendingDecision;
+
+  document.getElementById("m-route").textContent = d.target.replaceAll("_", " ");
+  document.getElementById("m-bytes").textContent = `${d.cloudBytesSent} B`;
 
   let resultText = "";
   try {
-    if (decision.target === "ON_DEVICE_NANO") {
-      resultText = await runOnDeviceNano(`Task: ${taskType}. Be concise.\n\n${decision.payloadToModel}`);
-    } else if (decision.target === "FIREBASE_CLOUD_GEMINI") {
-      const cloudRes = await callFirebaseHybridCloud(decision.payloadToModel, taskType);
+    if (d.target === "ON_DEVICE_NANO") {
+      resultText = await runOnDeviceNano(
+        `Create a concise shareable incident summary without exposing raw PII:\n\n${d.scan.redactedText}`
+      );
+    } else if (d.target === "FIREBASE_CLOUD_GEMINI") {
+      const cloudRes = await callFirebaseHybridCloud(d.payloadToModel, d.taskType, "ONLY_IN_CLOUD");
       resultText =
-        taskType === "structured-json"
+        d.taskType === "structured-json"
           ? JSON.stringify(repairJsonResponse(cloudRes.text), null, 2)
           : cloudRes.text;
     } else {
-      resultText = deterministicLocalSummary(decision.payloadToModel, taskType, decision.scan);
+      resultText = deterministicLocalSummary(d.payloadToModel, d.taskType, d.scan);
     }
   } catch (err) {
-    resultText = `Safe Local Fallback (${err.message}):\n\n` + deterministicLocalSummary(decision.payloadToModel, taskType, decision.scan);
+    resultText = `Safe Local Fallback (${err.message}):\n\n` + deterministicLocalSummary(d.payloadToModel, d.taskType, d.scan);
   }
 
   document.getElementById("m-lat").textContent = `${Math.round(performance.now() - t0)} ms`;
   document.getElementById("output").textContent = resultText;
+  document.getElementById("btn-copy").disabled = false;
 }
 
-document.getElementById("btn-run").addEventListener("click", executeHybridRouter);
+document.getElementById("btn-scan").addEventListener("click", runStep1LocalScan);
+document.getElementById("btn-approve").addEventListener("click", runStep2ApprovedExecution);
+document.getElementById("btn-copy").addEventListener("click", async () => {
+  const txt = document.getElementById("output").textContent;
+  try {
+    await navigator.clipboard.writeText(txt);
+    document.getElementById("btn-copy").textContent = "Copied!";
+    setTimeout(() => (document.getElementById("btn-copy").textContent = "Copy Final Report"), 1500);
+  } catch {}
+});
 document.getElementById("btn-offline-sim").addEventListener("click", () => {
   simulatedOffline = !simulatedOffline;
   refreshNetworkPill();
@@ -146,7 +182,7 @@ document.querySelectorAll("[data-preset]").forEach((btn) => {
     document.getElementById("doc-input").value = p.text;
     document.getElementById("task-type").value = p.taskType;
     document.getElementById("privacy-mode").value = p.privacyMode;
-    executeHybridRouter();
+    runStep1LocalScan();
   });
 });
 window.addEventListener("online", refreshNetworkPill);
