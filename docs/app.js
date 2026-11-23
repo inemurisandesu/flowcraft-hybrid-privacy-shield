@@ -17,6 +17,7 @@ let simulatedOffline = false;
 let onDeviceAvailable = false;
 let pendingDecision = null;
 let executionInFlight = false;
+let activeRunEpoch = 0;
 
 const PRESETS = {
   pii_local: {
@@ -58,6 +59,7 @@ function currentUiState() {
 }
 
 function invalidateApproval(reason) {
+  activeRunEpoch += 1;
   if (!pendingDecision) return;
   pendingDecision = null;
   const approveBtn = document.getElementById("btn-approve");
@@ -106,20 +108,12 @@ function refreshFirebasePill() {
 }
 
 async function runOnDeviceNano(exactPrompt) {
-  // Prefer Firebase AI Logic ONLY_ON_DEVICE if configured, else Chrome Prompt API directly
-  if (getSavedFirebaseConfig()) {
-    const fbRes = await callFirebaseHybridInference({
-      exactPrompt,
-      taskType: "summarize",
-      inferenceMode: "ONLY_ON_DEVICE",
-    });
-    if (fbRes.live) return fbRes;
-  }
+  // Always try Chrome Built-in AI locally FIRST (100% independent of CDN/network!)
   if (typeof LanguageModel !== "undefined" && typeof LanguageModel.create === "function") {
     const session = await LanguageModel.create();
     try {
       const text = await session.prompt(exactPrompt);
-      return { live: true, inferenceSource: "ON_DEVICE_CHROME_NANO", text };
+      return { live: true, cloudRequestMade: false, inferenceSource: "ON_DEVICE_CHROME_NANO", text };
     } finally {
       session.destroy?.();
     }
@@ -128,7 +122,7 @@ async function runOnDeviceNano(exactPrompt) {
     const session = await window.ai.languageModel.create();
     try {
       const text = await session.prompt(exactPrompt);
-      return { live: true, inferenceSource: "ON_DEVICE_CHROME_NANO", text };
+      return { live: true, cloudRequestMade: false, inferenceSource: "ON_DEVICE_CHROME_NANO", text };
     } finally {
       session.destroy?.();
     }
@@ -198,8 +192,9 @@ async function runStep2ApprovedExecution() {
     return;
   }
 
-  // Consume approval atomically BEFORE any async work (prevents double-click or race-condition egress)
   const d = pendingDecision;
+  const approvedProjectId = getSavedFirebaseConfig()?.projectId || null;
+  const myEpoch = ++activeRunEpoch;
   pendingDecision = null;
   executionInFlight = true;
 
@@ -211,6 +206,7 @@ async function runStep2ApprovedExecution() {
   const t0 = performance.now();
   let outputText = "";
   let execResult = "UNKNOWN";
+  let cloudRequestAttempted = false;
 
   try {
     if (!d.willContactCloud) {
@@ -230,11 +226,21 @@ async function runStep2ApprovedExecution() {
         execResult = "RULE_FALLBACK (0 B cloud)";
       }
     } else {
-      // ONLY_IN_CLOUD path — sends d.exactPrompt verbatim (same string shown in Step 2 box!)
+      // ONLY_IN_CLOUD path — re-validates consent right before network egress AFTER async SDK load!
       const cloudRes = await callFirebaseHybridInference({
         exactPrompt: d.exactPrompt,
         taskType: d.snapshot.taskType,
         inferenceMode: "ONLY_IN_CLOUD",
+        assertStillApproved: (liveProjectId) => {
+          const liveUi = currentUiState();
+          if (myEpoch !== activeRunEpoch || !isApprovalStillValid(d, liveUi)) {
+            throw new Error("CONSENT_REVOKED: policy, input, or network state changed before network egress.");
+          }
+          if (approvedProjectId && liveProjectId !== approvedProjectId) {
+            throw new Error("CONSENT_REVOKED: Firebase target project changed after Step 1 preview.");
+          }
+          cloudRequestAttempted = true;
+        },
       });
 
       if (!cloudRes.live) {
@@ -242,33 +248,45 @@ async function runStep2ApprovedExecution() {
         outputText =
           `[NO CLOUD CALL EXECUTED — ${cloudRes.inferenceSource}]\n` +
           `${cloudRes.error}\n\n` +
-          "Deterministic Rule-Based Local Preview (0 B sent):\n" +
+          "Deterministic Rule-Based Local Preview (cloudRequestMade: false):\n" +
           JSON.stringify(buildRuleFallbackReport(d.sanitizedBody, d.snapshot.taskType, d.scan), null, 2);
       } else if (d.snapshot.taskType === "structured-json") {
+        cloudRequestAttempted = true;
         const parsed = repairJsonResponse(cloudRes.text);
         const check = validateIncidentSchema(parsed);
         execResult = check.valid
           ? `${cloudRes.inferenceSource} (SCHEMA OK)`
           : `${cloudRes.inferenceSource} (SCHEMA WARN)`;
         outputText = JSON.stringify(
-          { inferenceSource: cloudRes.inferenceSource, schemaValid: check.valid, schemaErrors: check.errors, data: parsed },
+          {
+            cloudRequestMade: true,
+            projectId: cloudRes.projectId,
+            inferenceSource: cloudRes.inferenceSource,
+            schemaValid: check.valid,
+            schemaErrors: check.errors,
+            data: parsed,
+          },
           null,
           2
         );
       } else {
+        cloudRequestAttempted = true;
         execResult = `${cloudRes.inferenceSource} (LIVE)`;
-        outputText = `[inferenceSource: ${cloudRes.inferenceSource}]\n\n${cloudRes.text}`;
+        outputText = `[cloudRequestMade: true | projectId: ${cloudRes.projectId} | inferenceSource: ${cloudRes.inferenceSource}]\n\n${cloudRes.text}`;
       }
     }
   } catch (err) {
-    execResult = "ERROR (SAFE FALLBACK)";
-    outputText =
-      `[Inference failed: ${err.message}]\n\n` +
-      JSON.stringify(buildRuleFallbackReport(d.sanitizedBody, d.snapshot.taskType, d.scan), null, 2);
+    execResult = cloudRequestAttempted ? "CLOUD ERROR (REQUEST SENT)" : "ABORTED / SAFE FALLBACK";
+    const fb = buildRuleFallbackReport(d.sanitizedBody, d.snapshot.taskType, d.scan);
+    fb.cloudRequestMade = cloudRequestAttempted;
+    outputText = `[Execution note: ${err.message}]\n\n` + JSON.stringify(fb, null, 2);
   } finally {
     executionInFlight = false;
     approveBtn.textContent = "Step 2: Run Step 1 Again for New Request";
   }
+
+  // Do not overwrite UI if user started a newer Step 1 scan while this run was in flight
+  if (myEpoch !== activeRunEpoch) return;
 
   document.getElementById("m-route").textContent = d.inferenceMode;
   document.getElementById("m-result").textContent = `${execResult} · ${Math.round(performance.now() - t0)} ms`;
