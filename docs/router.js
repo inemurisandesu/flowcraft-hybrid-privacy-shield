@@ -1,7 +1,12 @@
 /**
- * FlowCraft Privacy Shield — Hybrid AI Routing Engine (Pure ES Module + Node compatible).
- * Decides deterministically whether a task runs 100% on-device (Chrome Gemini Nano)
- * or routes PII-redacted content to Cloud AI (Firebase AI Logic / Gemini).
+ * FlowCraft Privacy Shield — Hybrid AI Routing, Redaction, Prompt & Schema Engine
+ * Pure ES Module (Browser + Node.js compatible, zero external dependencies).
+ *
+ * Scope transparency:
+ * - Deterministically detects 5 structured PII/secret categories (email, API tokens,
+ *   payment card numbers, phone numbers, IPv4 addresses).
+ * - Unstructured secrets (names, street addresses, free-text confidentiality) are
+ *   addressed via the mandatory editable Step 2 human review before any cloud egress.
  */
 
 const PII_RULES = [
@@ -35,11 +40,44 @@ export function scanAndRedact(text) {
   };
 }
 
+export function utf8ByteLength(str) {
+  return new TextEncoder().encode(String(str || "")).length;
+}
+
+/**
+ * Builds the EXACT prompt string (instruction + sanitized body) displayed in Step 2 preview
+ * and transmitted verbatim when approved — zero hidden instructions appended later.
+ */
+export function buildExactPrompt(sanitizedBody, taskType) {
+  const body = String(sanitizedBody || "").trim();
+  if (taskType === "structured-json") {
+    return (
+      "Convert the following sanitized customer support ticket into strict JSON with exact keys: " +
+      "title (string), severity (one of: low, medium, high, critical), summary (string), " +
+      "actionItems (array of non-empty strings). Do not invent unredacted personal identifiers.\n\n" +
+      `Sanitized Ticket:\n${body}`
+    );
+  }
+  if (taskType === "deep-analysis") {
+    return (
+      "Convert the following sanitized customer support ticket into a concise, shareable Markdown " +
+      "incident report with sections: ## Summary, ## Impact, and ## Next Actions. Keep all redaction tokens intact.\n\n" +
+      `Sanitized Ticket:\n${body}`
+    );
+  }
+  return (
+    "Summarize the following sanitized customer support ticket in 3 concise bullet points without " +
+    "reconstructing any redacted identifiers:\n\n" +
+    `Sanitized Ticket:\n${body}`
+  );
+}
+
 /**
  * Core Hybrid AI Routing Policy:
- * - "strict-local" mode OR offline -> ALWAYS on-device (never send a single byte to cloud).
- * - Sensitive data present & simple task & on-device model ready -> ON_DEVICE_LOCAL (0 bytes sent).
- * - Complex synthesis/structured JSON task OR on-device unavailable -> REDACTED_CLOUD (only PII-redacted text sent).
+ * - Offline OR "strict-local" -> ALWAYS on-device (`ONLY_ON_DEVICE`), 0 cloud egress.
+ * - "hybrid-auto" + simple task + on-device ready -> `ONLY_ON_DEVICE` (Gemini Nano).
+ * - Complex synthesis/JSON OR "cloud-redacted" (when online) -> `ONLY_IN_CLOUD` after
+ *   deterministic redaction + mandatory Step 2 human approval.
  */
 export function decideRoute({
   text,
@@ -50,41 +88,89 @@ export function decideRoute({
 }) {
   const scan = scanAndRedact(text);
   const isComplexTask = taskType === "deep-analysis" || taskType === "structured-json" || scan.originalLength > 4000;
+  const exactPrompt = buildExactPrompt(scan.redactedText, taskType);
+  const promptBytes = utf8ByteLength(exactPrompt);
 
   if (!isOnline || privacyMode === "strict-local") {
     return {
-      target: onDeviceAvailable ? "ON_DEVICE_NANO" : "LOCAL_DETERMINISTIC_FALLBACK",
-      payloadToModel: text,
-      cloudBytesSent: 0,
+      target: onDeviceAvailable ? "ON_DEVICE_NANO" : "LOCAL_RULE_FALLBACK",
+      inferenceMode: "ONLY_ON_DEVICE",
+      sanitizedBody: scan.redactedText,
+      exactPrompt,
+      promptBytes,
+      willContactCloud: false,
       reason: !isOnline
-        ? "Offline detected: executing 100% locally."
-        : "Strict Local Privacy mode: zero cloud egress enforced.",
+        ? "Offline detected: cloud egress disabled (ONLY_ON_DEVICE)."
+        : "Strict Local policy active: cloud egress disabled (ONLY_ON_DEVICE).",
       scan,
+      snapshot: { text: String(text || ""), taskType, privacyMode, isOnline },
     };
   }
 
   if (privacyMode === "hybrid-auto" && onDeviceAvailable && !isComplexTask) {
     return {
       target: "ON_DEVICE_NANO",
-      payloadToModel: text,
-      cloudBytesSent: 0,
+      inferenceMode: "ONLY_ON_DEVICE",
+      sanitizedBody: scan.redactedText,
+      exactPrompt,
+      promptBytes,
+      willContactCloud: false,
       reason: scan.containsSensitiveData
-        ? `Detected ${scan.totalFindings} PII/secret item(s): handled 100% on-device via Chrome Gemini Nano (0 bytes sent to cloud).`
-        : "Low-latency local task: handled on-device via Chrome Gemini Nano (zero cloud cost).",
+        ? `Masked ${scan.totalFindings} structured PII/secret match(es); simple task stays on-device via Gemini Nano (ONLY_ON_DEVICE).`
+        : "Simple local task routed on-device via Gemini Nano (ONLY_ON_DEVICE).",
       scan,
+      snapshot: { text: String(text || ""), taskType, privacyMode, isOnline },
     };
   }
 
-  // Cloud route (Firebase AI Logic) — ALWAYS strip PII before egress!
-  const safePayload = scan.redactedText;
   return {
     target: "FIREBASE_CLOUD_GEMINI",
-    payloadToModel: safePayload,
-    cloudBytesSent: new TextEncoder().encode(safePayload).length,
+    inferenceMode: "ONLY_IN_CLOUD",
+    sanitizedBody: scan.redactedText,
+    exactPrompt,
+    promptBytes,
+    willContactCloud: true,
     reason: scan.containsSensitiveData
-      ? `Complex task (${taskType}): stripped ${scan.totalFindings} PII/secret item(s) locally before routing sanitized payload to Firebase AI Logic.`
-      : `Complex task (${taskType}): routed to Firebase AI Logic cloud inference.`,
+      ? `Masked ${scan.totalFindings} structured PII/secret match(es). Inspect & edit the exact prompt below before approving ONLY_IN_CLOUD inference.`
+      : "No regex PII matched; inspect & edit the exact prompt below before approving ONLY_IN_CLOUD inference.",
     scan,
+    snapshot: { text: String(text || ""), taskType, privacyMode, isOnline },
+  };
+}
+
+/**
+ * Verifies that a Step 1 approval snapshot still matches live UI state before execution.
+ * Prevents stale cloud approval from executing after switching to strict-local or offline.
+ */
+export function isApprovalStillValid(decision, currentState) {
+  if (!decision || !decision.snapshot || !currentState) return false;
+  const s = decision.snapshot;
+  if (s.privacyMode !== currentState.privacyMode) return false;
+  if (s.taskType !== currentState.taskType) return false;
+  if (s.isOnline !== currentState.isOnline) return false;
+  if (s.text !== String(currentState.text || "")) return false;
+  if (decision.willContactCloud && (!currentState.isOnline || currentState.privacyMode === "strict-local")) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Safe deterministic rule-based fallback summary — NEVER reads raw unredacted text.
+ */
+export function buildRuleFallbackReport(sanitizedBody, taskType, scan) {
+  const safeText = scanAndRedact(sanitizedBody).redactedText;
+  const lines = safeText.split("\n").map((l) => l.trim()).filter(Boolean);
+  return {
+    engine: "RULE_BASED_LOCAL_FALLBACK",
+    inferenceSource: "LOCAL_RULE_FALLBACK",
+    taskType,
+    headline: lines[0] || "Sanitized Incident Log",
+    lineCount: lines.length,
+    structuredPiiMasked: scan.counts,
+    promptUtf8Bytes: utf8ByteLength(safeText),
+    cloudRequestMade: false,
+    sanitizedBody: safeText,
   };
 }
 
@@ -101,4 +187,22 @@ export function repairJsonResponse(raw) {
   }
   s = s.replace(/,\s*([}\]])/g, "$1");
   return JSON.parse(s);
+}
+
+const VALID_SEVERITIES = new Set(["low", "medium", "high", "critical"]);
+
+export function validateIncidentSchema(obj) {
+  const errors = [];
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
+    return { valid: false, errors: ["Output must be a JSON object"] };
+  }
+  if (typeof obj.title !== "string" || !obj.title.trim()) errors.push("title must be a non-empty string");
+  if (typeof obj.severity !== "string" || !VALID_SEVERITIES.has(obj.severity.toLowerCase())) {
+    errors.push("severity must be one of: low, medium, high, critical");
+  }
+  if (typeof obj.summary !== "string" || !obj.summary.trim()) errors.push("summary must be a non-empty string");
+  if (!Array.isArray(obj.actionItems) || obj.actionItems.length === 0 || !obj.actionItems.every((x) => typeof x === "string" && x.trim())) {
+    errors.push("actionItems must be a non-empty array of strings");
+  }
+  return { valid: errors.length === 0, errors };
 }

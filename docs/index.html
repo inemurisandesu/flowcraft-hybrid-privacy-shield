@@ -8,18 +8,19 @@
     :root { --bg: #0b1120; --panel: #111827; --border: #1f2937; --accent: #38bdf8; --ok: #4ade80; --warn: #fbbf24; --danger: #f87171; --text: #f1f5f9; --muted: #94a3b8; }
     * { box-sizing: border-box; }
     body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); padding: 24px; }
-    .container { max-width: 1080px; margin: 0 auto; }
+    .container { max-width: 1120px; margin: 0 auto; }
     header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 18px; }
     h1 { margin: 0; font-size: 22px; color: var(--accent); }
     .sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
     .pills { display: flex; gap: 8px; flex-wrap: wrap; }
     .pill { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel); }
     .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-    @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
+    @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
     .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
     label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; font-weight: 600; }
     textarea, select { width: 100%; background: #0f172a; color: var(--text); border: 1px solid #334155; border-radius: 6px; padding: 10px; font-family: ui-monospace, monospace; font-size: 12.5px; }
-    textarea { min-height: 165px; resize: vertical; }
+    textarea { min-height: 155px; resize: vertical; }
+    textarea.compact { min-height: 105px; margin-bottom: 8px; }
     .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; }
     button { background: #2563eb; color: #fff; border: none; border-radius: 6px; padding: 9px 13px; font-weight: 600; cursor: pointer; font-size: 12.5px; }
     button:hover { background: #1d4ed8; }
@@ -28,12 +29,16 @@
     button.ok:hover { background: #166534; }
     button.ghost { background: #1e293b; border: 1px solid #334155; }
     .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
+    @media (max-width: 720px) { .metrics { grid-template-columns: 1fr 1fr; } }
     .metric { background: #0f172a; border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
     .metric .k { font-size: 11px; color: var(--muted); }
-    .metric .v { font-size: 16px; font-weight: 700; margin-top: 4px; color: var(--ok); }
-    pre { white-space: pre-wrap; word-break: break-word; background: #0f172a; border: 1px solid var(--border); border-radius: 6px; padding: 12px; font-size: 12px; min-height: 110px; margin: 0 0 10px; }
+    .metric .v { font-size: 14.5px; font-weight: 700; margin-top: 4px; color: var(--ok); }
+    pre { white-space: pre-wrap; word-break: break-word; background: #0f172a; border: 1px solid var(--border); border-radius: 6px; padding: 12px; font-size: 12px; min-height: 95px; margin: 0 0 10px; }
     .banner { padding: 10px 12px; border-radius: 6px; font-size: 12.5px; margin-bottom: 10px; border: 1px solid #1e3a8a; background: #172554; }
+    .scope-note { font-size: 11.5px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
     .step-badge { display: inline-block; font-size: 11px; padding: 2px 7px; border-radius: 4px; background: #1e293b; color: var(--accent); margin-right: 6px; }
+    details { margin-top: 14px; background: #0f172a; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+    summary { cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--accent); }
   </style>
 </head>
 <body>
@@ -41,70 +46,92 @@
     <header>
       <div>
         <h1>FlowCraft Privacy Shield — Hybrid AI Incident Report Builder</h1>
-        <div class="sub">Step 1: On-Device PII Redaction &amp; Preview (0 Bytes Sent) → Step 2: Explicit Approval → Hybrid Cloud Report</div>
+        <div class="sub">Step 1: Local 5-Pattern Redaction &amp; Editable Prompt Review → Step 2: Explicit Approval → On-Device Nano or Firebase AI Logic (SDK 12.6)</div>
       </div>
       <div class="pills">
         <span class="pill" id="pill-nano">Chrome AI: Checking...</span>
+        <span class="pill" id="pill-fb">Firebase AI Logic: Checking...</span>
         <span class="pill" id="pill-net">Network: Checking...</span>
       </div>
     </header>
 
     <div class="metrics">
-      <div class="metric"><div class="k">Active Route</div><div class="v" id="m-route">IDLE</div></div>
-      <div class="metric"><div class="k">PII / Secrets Shielded</div><div class="v" id="m-pii">0</div></div>
-      <div class="metric"><div class="k">Cloud Bytes Sent</div><div class="v" id="m-bytes">0 B</div></div>
-      <div class="metric"><div class="k">Step Latency</div><div class="v" id="m-lat">—</div></div>
+      <div class="metric"><div class="k">Inference Mode</div><div class="v" id="m-route">IDLE</div></div>
+      <div class="metric"><div class="k">Structured PII Masked</div><div class="v" id="m-pii">0</div></div>
+      <div class="metric"><div class="k">Prompt UTF-8 Size</div><div class="v" id="m-bytes">0 B</div></div>
+      <div class="metric"><div class="k">Execution Result</div><div class="v" id="m-result">IDLE</div></div>
     </div>
 
     <div class="grid">
       <div class="card">
-        <label><span class="step-badge">STEP 1</span>Raw Customer Support Log (Stays 100% On-Device)</label>
-        <textarea id="doc-input"># Q4 Billing Escalation
+        <label><span class="step-badge">STEP 1</span>Raw Customer Support Log (Processed Locally Only)</label>
+        <textarea id="doc-input"># Q4 Refund Escalation Ticket #INV-2026-1122
 Customer: alice.tanaka@example.com (Tel: 090-1234-5678, IP: 192.168.10.42)
 Temporary webhook token: ghp_1234567890abcdefghij123456
 
-Issue: Duplicate invoice #INV-2026-1122 for $450. Requesting refund within 5 business days and confirmation of API access restoration.</textarea>
+Issue: Duplicate charge of $450 on invoice #INV-2026-1122. Customer requests refund within 5 business days and webhook credential rotation confirmation.</textarea>
 
         <div class="controls">
           <div>
             <label for="task-type">Output Format</label>
             <select id="task-type">
-              <option value="summarize">Quick Summary (Prefer On-Device Nano)</option>
-              <option value="structured-json">Strict Incident JSON (Hybrid Cloud)</option>
-              <option value="deep-analysis">Shareable Incident Markdown (Hybrid Cloud)</option>
+              <option value="summarize">Quick Summary (Prefer ONLY_ON_DEVICE)</option>
+              <option value="structured-json">Strict Incident JSON (responseSchema Cloud)</option>
+              <option value="deep-analysis">Shareable Incident Markdown (Cloud)</option>
             </select>
           </div>
           <div>
             <label for="privacy-mode">Inference Policy</label>
             <select id="privacy-mode">
               <option value="hybrid-auto">Hybrid Auto (On-Device First + Consent Cloud)</option>
-              <option value="strict-local">ONLY_ON_DEVICE (Strict 0-Byte Egress)</option>
-              <option value="cloud-redacted">Redacted Cloud (Require Preview Consent)</option>
+              <option value="strict-local">ONLY_ON_DEVICE (No Cloud Requests)</option>
+              <option value="cloud-redacted">ONLY_IN_CLOUD (Require Step 2 Consent)</option>
             </select>
           </div>
         </div>
 
         <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px;">
-          <button class="ghost" data-preset="pii_local">Preset 1: PII → Local Nano</button>
-          <button class="ghost" data-preset="hybrid_json">Preset 2: Incident → Cloud JSON</button>
-          <button class="ghost" data-preset="offline_shield">Preset 3: Offline Shield</button>
+          <button class="ghost" data-preset="pii_local">Preset 1: Refund Ticket → Local Nano</button>
+          <button class="ghost" data-preset="hybrid_json">Preset 2: Same Ticket → Cloud JSON</button>
+          <button class="ghost" data-preset="offline_shield">Preset 3: Strict Local Shield</button>
         </div>
 
         <div style="display:flex; gap:8px; flex-wrap:wrap;">
-          <button id="btn-scan">Step 1: Inspect &amp; Redact Locally (0 B Sent)</button>
+          <button id="btn-scan">Step 1: Scan &amp; Preview Locally</button>
+          <button id="btn-prepare-nano" class="ghost">Prepare On-Device Model</button>
           <button id="btn-offline-sim" class="ghost">Toggle Offline Mode</button>
         </div>
+
+        <div class="scope-note">
+          <strong>Detection Scope:</strong> Automated regex masks <em>emails, API tokens (sk-/ghp_/AKIA/AIza), card numbers, phone numbers, and IPv4 addresses</em>.
+          Always visually inspect and edit Step 2 to redact unstructured names, addresses, or custom secrets before approving any cloud call.
+        </div>
+
+        <details>
+          <summary>Firebase Web Config (Optional — Required for Live ONLY_IN_CLOUD)</summary>
+          <p class="scope-note">Paste your Firebase project Web App JSON (<code>apiKey</code>, <code>projectId</code>, <code>appId</code>) to execute live Firebase AI Logic (<code>12.6.0</code>) calls directly from your browser. Stored only in local <code>localStorage</code>.</p>
+          <textarea id="fb-config-input" class="compact" placeholder='{"apiKey":"...","authDomain":"...","projectId":"...","appId":"..."}'></textarea>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <button id="btn-save-fb" class="ghost">Save / Clear Config</button>
+            <span id="fb-status" class="scope-note" style="margin:0;"></span>
+          </div>
+        </details>
       </div>
 
       <div class="card">
-        <label><span class="step-badge">STEP 2</span>Sanitized Egress Preview (Verify Before Any Cloud Call)</label>
-        <div class="banner" id="route-reason">Run Step 1 to scan PII locally and inspect the exact payload before approving any cloud inference.</div>
-        <pre id="preview-box">No local scan yet (0 bytes sent).</pre>
+        <label><span class="step-badge">STEP 2</span>Editable Sanitized Ticket (Manual Review Before Execution)</label>
+        <div class="banner" id="route-reason">Run Step 1 to mask structured PII locally and inspect the exact prompt before any execution.</div>
+        <textarea id="preview-sanitized" class="compact" disabled placeholder="Run Step 1 first..."></textarea>
+
+        <label>Exact Prompt Sent Verbatim (Instruction + Sanitized Ticket)</label>
+        <pre id="exact-prompt-box">No prompt prepared yet.</pre>
+
         <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
-          <button id="btn-approve" class="ok" disabled>Step 2: Approve &amp; Generate Report</button>
+          <button id="btn-approve" class="ok" disabled>Step 2: Approve &amp; Execute</button>
           <button id="btn-copy" class="ghost" disabled>Copy Final Report</button>
         </div>
-        <label><span class="step-badge">OUTPUT</span>Shareable Incident Report</label>
+
+        <label><span class="step-badge">OUTPUT</span>Execution Output &amp; Provenance</label>
         <pre id="output">Waiting for Step 2 approval...</pre>
       </div>
     </div>

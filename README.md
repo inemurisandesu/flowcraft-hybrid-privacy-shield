@@ -1,22 +1,35 @@
-# FlowCraft Privacy Shield — Hybrid AI Document & PII Router
+# FlowCraft Privacy Shield — Hybrid AI Support Incident Router
 
-Built for **Google `#BuildHybridAI 2026`** (Best Web/Chrome App & Hybrid AI Routing).
+Built for **Google `#BuildHybridAI 2026`** (Firebase AI Logic + Chrome Built-in AI / Gemini Nano).
+
+- **Live Demo (GitHub Pages)**: https://inemurisandesu.github.io/flowcraft-hybrid-privacy-shield/
+- **License**: MIT (`LICENSE`)
 
 ## Problem
-Sending raw business documents directly to cloud LLMs leaks customer emails, phone numbers, IPs, and API keys—while running everything on-device struggles with complex multi-step reasoning and strict schema extraction.
+Support and ops teams want AI-structured incident reports, yet pasting raw tickets into cloud LLMs exposes customer emails, phone numbers, IP addresses, and leaked API tokens. Running everything on-device preserves privacy but can struggle with strict schema extraction.
 
-## Hybrid AI Solution
-FlowCraft Privacy Shield implements a **3-layer privacy-first hybrid router**:
-1. **Deterministic Local PII & Secret Shield (`router.js`)**: Scans and masks emails, phone numbers, IPv4 addresses, cards, and API tokens (`sk-`, `ghp_`, `AKIA`, `AIza`) inside the browser before any network egress.
-2. **On-Device Neural Inference (Chrome Built-in AI / Gemini Nano)**: Handles sensitive summaries, ticket triage, and offline requests **100% locally (0 bytes sent to cloud)**.
-3. **Sanitized Cloud Hybrid Inference (Firebase AI Logic)**: Routes complex structured JSON extraction and deep analysis to Cloud Gemini using **only PII-redacted payloads**, paired with a deterministic local JSON repair fallback.
+## Hybrid AI Architecture (Honest Scope & Explicit Consent)
+1. **Step 1 — Local Structured PII Redaction (`public/router.js`)**:
+   - Deterministically masks 5 structured categories locally in the browser: **emails, API tokens (`sk-`, `ghp_`, `AKIA`, `AIza`), payment card numbers, phone numbers, and IPv4 addresses**.
+   - **Transparent Scope**: Unstructured secrets (names, street addresses, confidential prose) cannot be guaranteed by regex alone, so Step 2 provides an **editable sanitized ticket box** and displays the **exact verbatim prompt (instruction + ticket) and UTF-8 byte size** before any inference runs.
+2. **Step 2 — Explicit Consent & Stale-Approval Guard (`public/app.js`)**:
+   - Any change to input text, output format, inference policy, or network connectivity **immediately invalidates** prior Step 1 approval.
+   - Approval is re-validated and atomically consumed before the first `await` so switching to `ONLY_ON_DEVICE` (Strict Local) or going offline can never trigger a stale cloud call.
+3. **Hybrid Execution (`public/firebase-hybrid.js`, Firebase Web SDK `12.6.0`)**:
+   - **On-Device (`InferenceMode.ONLY_ON_DEVICE` / Chrome Prompt API)**: Handles local summaries and offline/strict-local workflows with zero cloud requests. Includes a user-gesture **Prepare On-Device Model** button (`LanguageModel.create()` / `initializeDeviceModel()`).
+   - **Cloud (`InferenceMode.ONLY_IN_CLOUD` + `responseSchema`)**: Sends ONLY the user-reviewed verbatim prompt to `gemini-2.5-flash` with strict JSON `responseSchema`, validates required keys/types, and displays the real `response.inferenceSource`.
+   - **Honest Fallback**: Never fabricates fake cloud output when Firebase Web Config is unset—clearly displays `CLOUD NOT CONFIGURED` and offers a rule-based local fallback built strictly from redacted text.
 
-## Run Tests Locally
-```bash
-node test/router.test.mjs
-```
-
-## Preview Locally
-```bash
-python3 -m http.server 8080 --directory public
-```
+## Judge Reproduction Guide
+1. **Run Unit Tests**:
+   ```bash
+   node test/router.test.mjs
+   ```
+2. **Preview Locally**:
+   ```bash
+   python3 -m http.server 8080 --directory public
+   ```
+3. **Test All 3 Hybrid Paths**:
+   - **On-Device Offline Path**: Click **Prepare On-Device Model** (Chrome with Built-in AI), toggle offline, select Preset 1, run Step 1 → Step 2 (verify 0 network requests in DevTools Network tab).
+   - **Live Cloud Schema Path**: Open **Firebase Web Config**, paste your Firebase Web App JSON (`apiKey`, `projectId`, `appId`), select Preset 2 (same refund ticket), review/edit Step 2 exact prompt, click Step 2 → inspect live `response.inferenceSource` and validated JSON.
+   - **Security Guard Check**: Run Step 1 on Cloud mode, switch Inference Policy to `ONLY_ON_DEVICE (No Cloud Requests)` → verify approval is immediately invalidated and Step 2 button disables.
